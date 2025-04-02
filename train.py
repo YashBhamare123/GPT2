@@ -23,6 +23,7 @@ optim = AdamW(model.parameters(), lr = 3e-4)
 # Creating the training loop
 for i in range(12):
     logits = model(x)
+    print(logits)
     loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
     optim.zero_grad()
     loss.backward()
