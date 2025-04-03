@@ -6,7 +6,6 @@ import torch.nn.functional as F
 class GPT2(nn.Module):
     def __init__(self):
         super().__init__()
-
         # Implementing the transformer
         self.transformer = nn.ModuleDict({
             "wte" : nn.Embedding(c.vocab_size, c.embed_dim),
@@ -21,21 +20,33 @@ class GPT2(nn.Module):
         # Implementing parameter sharing
         self.lm_head.weight = self.transformer.wte.weight
 
+        # Properly initializing the weights of the parameters to avoid skyrocketing in the loss function
+        for module in self.modules():
+            if isinstance(module, (nn.Linear, nn.Embedding)):
+                module.weight.data.normal_(mean=0.0, std=0.02)
+                if isinstance(module, nn.Linear) and module.bias is not None:
+                    module.bias.data.zero_()
+            elif isinstance(module, nn.LayerNorm):
+                module.bias.data.zero_()
+                module.weight.data.fill_(1.0)
+
     def forward(self, token_ids):
         # Creating the token vectors
         B = token_ids.size()[0]
+        N = token_ids.size()[1]
         tokens = self.transformer.wte(token_ids)
 
         # Creating the positioning vectors
         pos = torch.arange(0, c.seq_length, step = 1).to(c.device)
-        token_pos = self.transformer.wpe(pos).repeat([B,1, 1])[:, :token_ids.size()[1], :]
+        token_pos = self.transformer.wpe(pos).repeat([B, 1, 1])[:, :token_ids.size()[1], :]
+        assert token_pos.size() == tokens.size()
         out = tokens + token_pos
 
         # Passing the input through attention blocks
         for i in range(c.n_layers):
             out = self.transformer.h[i](out)
 
-        # Creating the probability vectors by taking dot product
+        # Creating the logits by taking dot product
         out = self.lm_head(self.transformer.ln_f(out))
         return out
 
@@ -74,6 +85,8 @@ class MaskedAttention(nn.Module):
 
         # Performing the attention mechanism
         attn_matrix = (q @ k.permute(0, 1, 3, 2))/torch.sqrt(torch.tensor(c.embed_dim//c.n_heads))
+
+        # Creating the mask to prevent future tokens from influencing the current token
         mask = torch.triu(torch.ones(N, N, device=c.device), diagonal=1).bool()
         attn_matrix = attn_matrix.masked_fill(mask.unsqueeze(0).unsqueeze(0), float('-inf'))
         masked_attn = F.softmax(attn_matrix, dim = 3) @ v
@@ -88,10 +101,10 @@ class MLP(nn.Module):
         super().__init__()
         self.c_fc = nn.Linear(c.embed_dim, 4*c.embed_dim)
         self.c_proj = nn.Linear(4*c.embed_dim, c.embed_dim)
-
+        self.gelu = nn.GELU()
     def forward(self, x):
         out = self.c_fc(x)
-        out = F.gelu(out)
+        out = self.gelu(out)
         out = self.c_proj(out)
         return out
 
